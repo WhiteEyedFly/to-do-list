@@ -1,0 +1,74 @@
+{
+  "tasks": [
+    {
+      "id": "wake",
+      "label": "Get up",
+      "type": "check"
+    },
+    {
+      "id": "stretch",
+      "label": "Stretch",
+      "type": "check"
+    },
+    {
+      "id": "workout",
+      "label": "Workout",
+      "type": "check"
+    },
+    {
+      "id": "polish",
+      "label": "Revise Polish",
+      "type": "check"
+    },
+    {
+      "id": "jobs",
+      "label": "Apply to jobs",
+      "type": "counter",
+      "target": 3
+    },
+    {
+      "id": "project",
+      "label": "Work on project",
+      "type": "check"
+    },
+    {
+      "id": "t1784638567510",
+      "label": "Read",
+      "type": "check"
+    },
+    {
+      "id": "t1784638574815",
+      "label": "Get ready for bed",
+      "type": "check"
+    }
+  ],
+  "logs": {
+    "2026-07-21": {
+      "counted": false,
+      "extras": [
+        {
+          "label": "Take the boxes downstairs",
+          "done": true
+        },
+        {
+          "label": "LinkedIn post",
+          "done": true
+        },
+        {
+          "label": "Register at doctors",
+          "done": true
+        }
+      ],
+      "wake": true,
+      "stretch": true,
+      "workout": true,
+      "jobs": 3,
+      "t1784638567510": true,
+      "project": true
+    }
+  },
+  "streak": {
+    "count": 0,
+    "last_date": null
+  }
+}
