@@ -1,27 +1,22 @@
-#!/usr/bin/env python3
-"""
-Daily Ritual - a simple tkinter checklist for daily recurring tasks.
-
-Data is saved to todo_data.json next to this script, so your tasks, today's
-progress, and streak persist between runs.
-
-EASY TO EDIT:
-- To change the starting tasks, edit DEFAULT_TASKS below.
-- To change colors/fonts, edit the constants just under it.
-- Everything else (add/remove/rename tasks, change counter targets) can also
-  be edited live in the app via the "Edit" button - no code changes needed.
-"""
-
 import json
 import os
 import time
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox
 from datetime import date, timedelta
 
-# ---------------------------------------------------------------------------
-# Config - tweak these freely
-# ---------------------------------------------------------------------------
+try:
+    import matplotlib
+    matplotlib.use("TkAgg")
+    from matplotlib.figure import Figure
+    from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+    MATPLOTLIB_AVAILABLE = True
+except ImportError:
+    MATPLOTLIB_AVAILABLE = False
+
+# ------
+# Config
+# ------
 
 DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "todo_data.json")
 
@@ -31,7 +26,7 @@ DEFAULT_TASKS = [
     {"id": "workout", "label": "Workout",         "type": "check"},
     {"id": "polish",  "label": "Revise Polish",   "type": "check"},
     {"id": "jobs",    "label": "Apply to jobs",   "type": "counter", "target": 3},
-    {"id": "project", "label": "Work on a project", "type": "check"},
+    {"id": "project", "label": "Work on project", "type": "check"},
 ]
 
 BG      = "#2a3125"
@@ -47,10 +42,21 @@ FONT_DISPLAY = ("Georgia", 20, "bold")
 FONT_BODY    = ("Segoe UI", 11)
 FONT_MONO    = ("Courier New", 9)
 
+BAR_COLOR = "#3A4172"  
+MA_WINDOW = 10 
 
-# ---------------------------------------------------------------------------
-# Data layer - plain JSON on disk, no external dependencies
-# ---------------------------------------------------------------------------
+
+def moving_average(values, window=MA_WINDOW):
+    result = []
+    for i in range(len(values)):
+        chunk = values[max(0, i - window + 1):i + 1]
+        result.append(sum(chunk) / len(chunk))
+    return result
+
+
+# ----------
+# Data layer
+# ----------
 
 def today_str():
     return date.today().isoformat()
@@ -87,9 +93,9 @@ def save_data(data):
         json.dump(data, f, indent=2)
 
 
-# ---------------------------------------------------------------------------
+# ---
 # App
-# ---------------------------------------------------------------------------
+# ---
 
 class DailyRitualApp(tk.Tk):
     def __init__(self):
@@ -107,7 +113,6 @@ class DailyRitualApp(tk.Tk):
         self._build_ui()
         self.refresh()
 
-    # ---- convenience accessors ----
     @property
     def tasks(self):
         return self.data["tasks"]
@@ -127,7 +132,6 @@ class DailyRitualApp(tk.Tk):
     def save(self):
         save_data(self.data)
 
-    # ---- UI construction (runs once) ----
     def _build_ui(self):
         pad = 18
 
@@ -161,11 +165,14 @@ class DailyRitualApp(tk.Tk):
         self.edit_btn = tk.Button(sec, text="Edit", command=self.toggle_edit, bg=BG, fg=INK_DIM,
                                    relief="solid", bd=1, font=FONT_MONO, padx=8, cursor="hand2")
         self.edit_btn.pack(side="right")
+        self.stats_btn = tk.Button(sec, text="Stats", command=self.open_stats, bg=BG, fg=INK_DIM,
+                                    relief="solid", bd=1, font=FONT_MONO, padx=8, cursor="hand2")
+        self.stats_btn.pack(side="right", padx=(0, 6))
 
         self.tasks_frame = tk.Frame(self, bg=CARD)
         self.tasks_frame.pack(fill="x", padx=pad, pady=(6, 10))
 
-        # extras section (packed/forgotten dynamically depending on content)
+        self.extras_label_head = tk.Label(self, text="ALSO TODAY", bg=BG, fg=INK_DIM, font=FONT_MONO)
         self.extras_frame = tk.Frame(self, bg=CARD)
 
         add_row = tk.Frame(self, bg=BG)
@@ -179,7 +186,6 @@ class DailyRitualApp(tk.Tk):
         tk.Label(self, text="Resets fresh each day. Streak counts a day when every task is done.",
                  bg=BG, fg=INK_DIM, font=("Courier New", 8), wraplength=380, justify="center").pack(pady=(6, 12))
 
-    # ---- rendering (called after every change) ----
     def refresh(self):
         self.date_lbl.config(text=pretty_date(self.today).upper())
         self.streak_num_lbl.config(text=str(self.streak["count"]))
@@ -289,6 +295,7 @@ class DailyRitualApp(tk.Tk):
             w.destroy()
 
         if self.log["extras"]:
+            self.extras_label_head.pack(fill="x", padx=18, pady=(0, 4))
             self.extras_frame.pack(fill="x", padx=18, pady=(0, 6))
             for i, ex in enumerate(self.log["extras"]):
                 row = tk.Frame(self.extras_frame, bg=CARD)
@@ -303,6 +310,7 @@ class DailyRitualApp(tk.Tk):
                 tk.Button(row, text="\u2715", command=lambda i=i: self.delete_extra(i), bg=CARD, fg=DANGER,
                           relief="flat", font=("Segoe UI", 10), cursor="hand2").pack(side="right")
         else:
+            self.extras_label_head.pack_forget()
             self.extras_frame.pack_forget()
 
     def toggle_edit(self):
@@ -386,6 +394,112 @@ class DailyRitualApp(tk.Tk):
         self.log["extras"].pop(i)
         self.save()
         self.refresh()
+
+    def _style_axis(self, ax, x, tick_labels):
+        ax.set_facecolor(CARD)
+        ax.tick_params(colors=INK_DIM, labelsize=7)
+        for spine in ax.spines.values():
+            spine.set_color(LINE)
+        step = max(1, len(x) // 8)
+        ax.set_xticks(x[::step])
+        ax.set_xticklabels([tick_labels[i] for i in range(0, len(tick_labels), step)],
+                            rotation=45, ha="right")
+
+    def open_stats(self):
+        if not MATPLOTLIB_AVAILABLE:
+            messagebox.showinfo("Stats", "Graphs need matplotlib. Install it with:\n\npip install matplotlib")
+            return
+
+        dates = sorted(self.data["logs"].keys())
+        if len(dates) < 2:
+            messagebox.showinfo("Stats", "Not enough history yet - keep using the app for a few days "
+                                          "and check back.")
+            return
+
+        win = tk.Toplevel(self)
+        win.title("Stats")
+        win.geometry("640x800")
+        win.configure(bg=BG)
+
+        container = tk.Frame(win, bg=BG)
+        container.pack(fill="both", expand=True)
+        canvas = tk.Canvas(container, bg=BG, highlightthickness=0)
+        scrollbar = tk.Scrollbar(container, orient="vertical", command=canvas.yview)
+        scroll_frame = tk.Frame(canvas, bg=BG)
+        scroll_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=scroll_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        x = list(range(len(dates)))
+        tick_labels = [d[5:] for d in dates]  # MM-DD
+        n_tasks = len(self.tasks)
+        total_rows = n_tasks + 2
+
+        fig = Figure(figsize=(6, 2.3 * total_rows), dpi=100)
+        fig.patch.set_facecolor(BG)
+
+        # one graph per daily task: 1/0 completion each day + 10-day moving average
+        row = 1
+        for t in self.tasks:
+            ax = fig.add_subplot(total_rows, 1, row)
+            series = []
+            for d in dates:
+                log = self.data["logs"][d]
+                if t["type"] == "counter":
+                    done = log.get(t["id"], 0) >= t["target"]
+                else:
+                    done = bool(log.get(t["id"], False))
+                series.append(1 if done else 0)
+            ax.bar(x, series, color=BAR_COLOR, width=0.7)
+            ax.plot(x, moving_average(series), color=GOLD, linewidth=2)
+            ax.set_ylim(-0.1, 1.1)
+            ax.set_title(t["label"], color=INK, fontsize=10, loc="left")
+            self._style_axis(ax, x, tick_labels)
+            row += 1
+
+        ax = fig.add_subplot(total_rows, 1, row)
+        sums = []
+        for d in dates:
+            log = self.data["logs"][d]
+            s = 0
+            for t in self.tasks:
+                if t["type"] == "counter":
+                    s += 1 if log.get(t["id"], 0) >= t["target"] else 0
+                else:
+                    s += 1 if log.get(t["id"], False) else 0
+            sums.append(s)
+        ax.bar(x, sums, color=BAR_COLOR, width=0.7)
+        ax.plot(x, moving_average(sums), color=SAGE, linewidth=2)
+        ax.set_ylim(-0.3, max(sums + [1]) + 0.5)
+        ax.set_title(f"All tasks completed per day (of {n_tasks})", color=INK, fontsize=10, loc="left")
+        self._style_axis(ax, x, tick_labels)
+        row += 1
+
+        ax = fig.add_subplot(total_rows, 1, row)
+        counts, rates = [], []
+        for d in dates:
+            extras = self.data["logs"][d].get("extras", [])
+            c = len(extras)
+            done = sum(1 for e in extras if e["done"])
+            counts.append(c)
+            rates.append(done / c if c else 0)
+        ax2 = ax.twinx()
+        ax.bar(x, counts, color=BAR_COLOR, width=0.7, label="count")
+        ax2.plot(x, rates, color=GOLD, linewidth=2, label="completion rate")
+        ax.set_ylim(-0.3, max(counts + [1]) + 0.5)
+        ax2.set_ylim(-0.1, 1.1)
+        ax2.tick_params(colors=INK_DIM, labelsize=7)
+        for spine in ax2.spines.values():
+            spine.set_color(LINE)
+        ax.set_title("Extra tasks: count (bars) & completion rate (line)", color=INK, fontsize=10, loc="left")
+        self._style_axis(ax, x, tick_labels)
+
+        fig.tight_layout()
+        canvas_widget = FigureCanvasTkAgg(fig, master=scroll_frame)
+        canvas_widget.draw()
+        canvas_widget.get_tk_widget().pack(fill="both", expand=True)
 
 
 if __name__ == "__main__":
