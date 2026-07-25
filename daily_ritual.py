@@ -1,3 +1,17 @@
+#!/usr/bin/env python3
+"""
+Daily Ritual - a simple tkinter checklist for daily recurring tasks.
+
+Data is saved to todo_data.json next to this script, so your tasks, today's
+progress, and streak persist between runs.
+
+EASY TO EDIT:
+- To change the starting tasks, edit DEFAULT_TASKS below.
+- To change colors/fonts, edit the constants just under it.
+- Everything else (add/remove/rename tasks, change counter targets) can also
+  be edited live in the app via the "Edit" button - no code changes needed.
+"""
+
 import json
 import os
 import time
@@ -42,11 +56,12 @@ FONT_DISPLAY = ("Georgia", 20, "bold")
 FONT_BODY    = ("Segoe UI", 11)
 FONT_MONO    = ("Courier New", 9)
 
-BAR_COLOR = "#3A4172"  
+BAR_COLOR = "#3A4172"
 MA_WINDOW = 10 
 
 
 def moving_average(values, window=MA_WINDOW):
+    """Trailing moving average; uses a partial (shorter) window at the start."""
     result = []
     for i in range(len(values)):
         chunk = values[max(0, i - window + 1):i + 1]
@@ -75,6 +90,16 @@ def new_task_id():
     return f"t{int(time.time() * 1000)}"
 
 
+def fresh_log():
+    return {"counted": False, "extras": []}
+
+
+def get_or_create_log(data, d_str):
+    """Return the log dict for a given date, creating an empty one if needed.
+    Used both for today's log and for extras scheduled ahead of time."""
+    return data["logs"].setdefault(d_str, fresh_log())
+
+
 def load_data():
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, "r") as f:
@@ -84,7 +109,7 @@ def load_data():
     data.setdefault("tasks", [t.copy() for t in DEFAULT_TASKS])
     data.setdefault("logs", {})
     data.setdefault("streak", {"count": 0, "last_date": None})
-    data["logs"].setdefault(today_str(), {"counted": False, "extras": []})
+    get_or_create_log(data, today_str())
     return data
 
 
@@ -112,7 +137,24 @@ class DailyRitualApp(tk.Tk):
 
         self._build_ui()
         self.refresh()
+        self._schedule_midnight_check()
 
+    def _schedule_midnight_check(self):
+        self.after(60_000, self._check_for_new_day)
+
+    def _check_for_new_day(self):
+        current = today_str()
+        if current != self.today:
+            self.today = current
+            self.log = get_or_create_log(self.data, self.today)
+            self.when_options = self._build_when_options()
+            self.when_combo.config(values=[o[0] for o in self.when_options])
+            self.when_combo.current(0)
+            self.save()
+            self.refresh()
+        self._schedule_midnight_check()
+
+    # ---- convenience accessors ----
     @property
     def tasks(self):
         return self.data["tasks"]
@@ -132,6 +174,21 @@ class DailyRitualApp(tk.Tk):
     def save(self):
         save_data(self.data)
 
+    def _build_when_options(self):
+        """(label, date_str) pairs for the next two weeks, for scheduling one-off tasks ahead."""
+        opts = []
+        for i in range(14):
+            d = date.today() + timedelta(days=i)
+            if i == 0:
+                label = "Today"
+            elif i == 1:
+                label = "Tomorrow"
+            else:
+                label = d.strftime("%a %b %d")
+            opts.append((label, d.isoformat()))
+        return opts
+
+    # ---- UI construction (runs once) ----
     def _build_ui(self):
         pad = 18
 
@@ -176,16 +233,30 @@ class DailyRitualApp(tk.Tk):
         self.extras_frame = tk.Frame(self, bg=CARD)
 
         add_row = tk.Frame(self, bg=BG)
-        add_row.pack(fill="x", padx=pad, pady=(4, 4))
+        add_row.pack(fill="x", padx=pad, pady=(4, 2))
         self.extra_entry = tk.Entry(add_row, bg=CARD, fg=INK, insertbackground=INK, relief="flat", font=FONT_BODY)
         self.extra_entry.pack(side="left", fill="x", expand=True, ipady=6, padx=(0, 8))
         self.extra_entry.bind("<Return>", lambda e: self.add_extra())
+
+        self.when_options = self._build_when_options()
+        self.when_var = tk.StringVar(value=self.when_options[0][0])
+        style = ttk.Style(self)
+        style.configure("Ritual.TCombobox", fieldbackground=CARD, background=CARD, foreground=INK)
+        self.when_combo = ttk.Combobox(add_row, textvariable=self.when_var, state="readonly",
+                                        values=[o[0] for o in self.when_options], width=10,
+                                        font=FONT_MONO, style="Ritual.TCombobox")
+        self.when_combo.pack(side="left", padx=(0, 8))
+
         tk.Button(add_row, text="Add", command=self.add_extra, bg=GOLD, fg=BG, relief="flat",
                   font=("Segoe UI", 9, "bold"), padx=12, cursor="hand2").pack(side="left")
+
+        self.plan_status_lbl = tk.Label(self, text="", bg=BG, fg=SAGE, font=FONT_MONO)
+        self.plan_status_lbl.pack(pady=(2, 0))
 
         tk.Label(self, text="Resets fresh each day. Streak counts a day when every task is done.",
                  bg=BG, fg=INK_DIM, font=("Courier New", 8), wraplength=380, justify="center").pack(pady=(6, 12))
 
+    # ---- rendering (called after every change) ----
     def refresh(self):
         self.date_lbl.config(text=pretty_date(self.today).upper())
         self.streak_num_lbl.config(text=str(self.streak["count"]))
@@ -211,15 +282,16 @@ class DailyRitualApp(tk.Tk):
             tk.Label(self.tasks_frame, text="No daily tasks yet.", bg=CARD, fg=INK_DIM,
                      font=FONT_BODY, pady=14).pack()
         else:
-            for t in self.tasks:
-                self._render_task_row(t)
+            n = len(self.tasks)
+            for i, t in enumerate(self.tasks):
+                self._render_task_row(t, i, n)
 
         if self.edit_mode:
             self._render_add_task_row()
 
         self._render_extras()
 
-    def _render_task_row(self, t):
+    def _render_task_row(self, t, index=0, total=1):
         row = tk.Frame(self.tasks_frame, bg=CARD)
         row.pack(fill="x", padx=10, pady=8)
 
@@ -245,6 +317,17 @@ class DailyRitualApp(tk.Tk):
                 tk.Button(counter, text="+", width=2, command=lambda t=t: self.adjust_counter(t, 1),
                           bg=CARD, fg=INK, relief="solid", bd=1, cursor="hand2").pack(side="left")
         else:
+            reorder = tk.Frame(row, bg=CARD)
+            reorder.pack(side="left", padx=(0, 6))
+            up_state = "normal" if index > 0 else "disabled"
+            down_state = "normal" if index < total - 1 else "disabled"
+            tk.Button(reorder, text="\u25b2", width=2, state=up_state, bg=CARD, fg=INK_DIM,
+                      relief="flat", font=("Segoe UI", 8), cursor="hand2",
+                      command=lambda i=index: self.move_task(i, -1)).pack()
+            tk.Button(reorder, text="\u25bc", width=2, state=down_state, bg=CARD, fg=INK_DIM,
+                      relief="flat", font=("Segoe UI", 8), cursor="hand2",
+                      command=lambda i=index: self.move_task(i, 1)).pack()
+
             entry = tk.Entry(row, bg=BG, fg=INK, insertbackground=INK, relief="flat", font=FONT_BODY)
             entry.insert(0, t["label"])
             entry.pack(side="left", fill="x", expand=True, ipady=4, padx=(0, 8))
@@ -313,6 +396,7 @@ class DailyRitualApp(tk.Tk):
             self.extras_label_head.pack_forget()
             self.extras_frame.pack_forget()
 
+    # ---- actions ----
     def toggle_edit(self):
         self.edit_mode = not self.edit_mode
         self.refresh()
@@ -362,6 +446,14 @@ class DailyRitualApp(tk.Tk):
         self.save()
         self.after_progress_change()
 
+    def move_task(self, index, delta):
+        new_index = index + delta
+        if 0 <= new_index < len(self.data["tasks"]):
+            tasks = self.data["tasks"]
+            tasks[index], tasks[new_index] = tasks[new_index], tasks[index]
+            self.save()
+            self.refresh()
+
     def add_task(self):
         label = self.new_task_entry.get().strip()
         if not label:
@@ -380,10 +472,23 @@ class DailyRitualApp(tk.Tk):
         text = self.extra_entry.get().strip()
         if not text:
             return
-        self.log["extras"].append({"label": text, "done": False})
+        idx = self.when_combo.current()
+        if idx < 0 or idx >= len(self.when_options):
+            idx = 0
+        label, target_date = self.when_options[idx]
+        log = get_or_create_log(self.data, target_date)
+        log["extras"].append({"label": text, "done": False})
         self.extra_entry.delete(0, "end")
+        self.when_combo.current(0)
         self.save()
-        self.refresh()
+        if target_date == self.today:
+            self.refresh()
+        else:
+            self._flash_status(f"Added for {label}")
+
+    def _flash_status(self, text):
+        self.plan_status_lbl.config(text=text)
+        self.after(2500, lambda: self.plan_status_lbl.config(text=""))
 
     def toggle_extra(self, i):
         self.log["extras"][i]["done"] = not self.log["extras"][i]["done"]
@@ -395,6 +500,7 @@ class DailyRitualApp(tk.Tk):
         self.save()
         self.refresh()
 
+    # ---- stats / graphs ----
     def _style_axis(self, ax, x, tick_labels):
         ax.set_facecolor(CARD)
         ax.tick_params(colors=INK_DIM, labelsize=7)
@@ -433,14 +539,13 @@ class DailyRitualApp(tk.Tk):
         scrollbar.pack(side="right", fill="y")
 
         x = list(range(len(dates)))
-        tick_labels = [d[5:] for d in dates]  # MM-DD
+        tick_labels = [d[5:] for d in dates]
         n_tasks = len(self.tasks)
         total_rows = n_tasks + 2
 
         fig = Figure(figsize=(6, 2.3 * total_rows), dpi=100)
         fig.patch.set_facecolor(BG)
 
-        # one graph per daily task: 1/0 completion each day + 10-day moving average
         row = 1
         for t in self.tasks:
             ax = fig.add_subplot(total_rows, 1, row)
