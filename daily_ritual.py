@@ -1,17 +1,3 @@
-#!/usr/bin/env python3
-"""
-Daily Ritual - a simple tkinter checklist for daily recurring tasks.
-
-Data is saved to todo_data.json next to this script, so your tasks, today's
-progress, and streak persist between runs.
-
-EASY TO EDIT:
-- To change the starting tasks, edit DEFAULT_TASKS below.
-- To change colors/fonts, edit the constants just under it.
-- Everything else (add/remove/rename tasks, change counter targets) can also
-  be edited live in the app via the "Edit" button - no code changes needed.
-"""
-
 import json
 import os
 import time
